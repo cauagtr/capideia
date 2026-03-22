@@ -1,13 +1,11 @@
 'use client'
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeft, Eye, EyeOff } from 'lucide-react'
 import { createClient } from '@/lib/supabase'
 import toast from 'react-hot-toast'
 
 export default function LoginPage() {
-  const router = useRouter()
   const [identifier, setIdentifier] = useState('')
   const [password, setPassword] = useState('')
   const [showPw, setShowPw] = useState(false)
@@ -25,17 +23,20 @@ export default function LoginPage() {
         : query.eq('username', identifier.toLowerCase())
       ).single()
 
-      if (error || !user) { toast.error('Usuário não encontrado'); return }
+      if (error || !user) { toast.error('Usuário não encontrado'); setLoading(false); return }
 
       const expectedHash = btoa(password + '_capideia_salt')
-      if (user.password_hash !== expectedHash) { toast.error('Senha incorreta'); return }
+      if (user.password_hash !== expectedHash) { toast.error('Senha incorreta'); setLoading(false); return }
 
       localStorage.setItem('capideia_user', JSON.stringify(user))
       toast.success('Bem-vindo de volta! 🦫')
-      router.push('/app/inicio')
+      
+      // Force hard navigation to avoid auth state issues
+      setTimeout(() => {
+        window.location.href = '/app/inicio'
+      }, 800)
     } catch {
       toast.error('Erro ao fazer login')
-    } finally {
       setLoading(false)
     }
   }
@@ -50,7 +51,6 @@ export default function LoginPage() {
       </div>
 
       <div className="flex-1 flex flex-col px-4 pt-8">
-        {/* Logo */}
         <div className="text-center mb-10">
           <span className="text-5xl">🦫</span>
           <h2 className="text-2xl font-black mt-2" style={{
@@ -76,7 +76,8 @@ export default function LoginPage() {
             <label className="block text-xs text-gray-400 mb-1.5">Senha</label>
             <div className="relative">
               <input
-                className="input-base pr-10"
+                className="input-base"
+                style={{ paddingRight: '40px' }}
                 type={showPw ? 'text' : 'password'}
                 placeholder="••••••••"
                 value={password}
@@ -91,8 +92,8 @@ export default function LoginPage() {
 
           <button className="btn-primary w-full py-4 text-base mt-2" onClick={handleLogin} disabled={loading}>
             {loading ? (
-              <span className="flex items-center justify-center gap-2">
-                <div className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" />
+              <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                <div style={{ width: '16px', height: '16px', border: '2px solid rgba(0,0,0,0.3)', borderTop: '2px solid black', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
                 Entrando...
               </span>
             ) : 'Entrar 🚀'}
@@ -100,18 +101,21 @@ export default function LoginPage() {
 
           <p className="text-center text-sm text-gray-400 pt-2">
             Não tem conta?{' '}
-            <Link href="/cadastro" className="text-green-DEFAULT font-semibold">Cadastrar agora</Link>
+            <Link href="/cadastro" className="font-semibold" style={{ color: '#00c853' }}>Cadastrar agora</Link>
           </p>
         </div>
 
-        {/* Demo hint */}
         <div className="mt-auto pb-8 pt-12">
-          <div className="border border-border/50 rounded-xl p-4 bg-surface/50">
+          <div className="border border-border rounded-xl p-4" style={{ background: 'rgba(20,20,20,0.5)' }}>
             <p className="text-xs text-gray-500 text-center mb-2">Admin demo</p>
-            <p className="text-xs text-gray-400 text-center">Acesse <Link href="/admin" className="text-purple-DEFAULT font-medium">/admin</Link> com usuário <code className="bg-card px-1 rounded">cauagtr</code></p>
+            <p className="text-xs text-gray-400 text-center">Acesse <Link href="/admin" style={{ color: '#7c4dff' }}>/admin</Link> com usuário <code style={{ background: '#1a1a1a', padding: '1px 4px', borderRadius: '3px' }}>cauagtr</code></p>
           </div>
         </div>
       </div>
+
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg); } }
+      `}</style>
     </div>
   )
 }
