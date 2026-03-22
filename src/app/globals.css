@@ -1,0 +1,125 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --green: #00c853;
+  --purple: #7c4dff;
+  --bg: #0a0a0a;
+  --surface: #141414;
+  --card: #1a1a1a;
+  --border: #2a2a2a;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html, body {
+  background: var(--bg);
+  color: white;
+  font-family: var(--font-inter), system-ui, sans-serif;
+  overflow-x: hidden;
+}
+
+/* Mobile-first centering with desktop backdrop */
+.app-shell {
+  max-width: 430px;
+  margin: 0 auto;
+  min-height: 100dvh;
+  position: relative;
+  background: var(--bg);
+}
+
+@media (min-width: 430px) {
+  body {
+    background: #050505;
+  }
+  .app-shell {
+    box-shadow: 0 0 60px rgba(0,200,83,0.05);
+  }
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+/* Feed snap scroll */
+.feed-container {
+  height: 100dvh;
+  overflow-y: scroll;
+  scroll-snap-type: y mandatory;
+  -webkit-overflow-scrolling: touch;
+}
+
+.feed-item {
+  scroll-snap-align: start;
+  height: 100dvh;
+  position: relative;
+  flex-shrink: 0;
+}
+
+/* Video overlay gradients */
+.overlay-top {
+  background: linear-gradient(to bottom, rgba(0,0,0,0.7) 0%, transparent 100%);
+}
+.overlay-bottom {
+  background: linear-gradient(to top, rgba(0,0,0,0.92) 0%, rgba(0,0,0,0.6) 60%, transparent 100%);
+}
+
+/* Input base styles */
+.input-base {
+  @apply w-full bg-card border border-border rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-green-DEFAULT transition-colors text-sm;
+}
+
+/* Button styles */
+.btn-primary {
+  @apply bg-green-DEFAULT text-black font-semibold rounded-xl px-6 py-3 active:scale-95 transition-all duration-150;
+}
+
+.btn-secondary {
+  @apply bg-surface border border-border text-white font-medium rounded-xl px-6 py-3 active:scale-95 transition-all duration-150;
+}
+
+/* Card */
+.glass-card {
+  background: rgba(26, 26, 26, 0.9);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* Bottom nav safe area */
+.bottom-nav {
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+
+/* Skeleton shimmer */
+.skeleton {
+  background: linear-gradient(90deg, var(--card) 25%, var(--border) 50%, var(--card) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+/* Hide scrollbar utility */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* Discount badge */
+.discount-badge {
+  background: linear-gradient(135deg, #ff6b35, #ff3366);
+  box-shadow: 0 2px 8px rgba(255, 107, 53, 0.4);
+}
+
+/* Plan cards */
+.plan-card-casual { border-color: var(--border); }
+.plan-card-curitibano { border-color: var(--green); box-shadow: 0 0 20px rgba(0,200,83,0.1); }
+.plan-card-capivara { border-color: var(--purple); box-shadow: 0 0 20px rgba(124,77,255,0.15); }
+
+/* Animated gradient background for landing */
+.hero-gradient {
+  background: radial-gradient(ellipse at 30% 50%, rgba(0,200,83,0.15) 0%, transparent 50%),
+              radial-gradient(ellipse at 70% 80%, rgba(124,77,255,0.1) 0%, transparent 50%),
+              var(--bg);
+}
