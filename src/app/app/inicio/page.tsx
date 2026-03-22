@@ -126,7 +126,7 @@ export default function InicioPage() {
     const { count } = await supabase.from('interests').select('*', { count: 'exact', head: true }).eq('user_id', user.id).eq('status', 'redeemed')
     const redeemed = count || 0
     await supabase.from('interests').upsert({ user_id: user.id, experience_id: exp.id, status: 'interested' })
-    setLikedIds(prev => new Set([...prev, exp.id]))
+    setLikedIds(prev => { const s = new Set(Array.from(prev)); s.add(exp.id); return s; })
     setShowCouponPopup(exp)
     // Animate heart
     const heartBtn = document.getElementById(`heart-${exp.id}`)
