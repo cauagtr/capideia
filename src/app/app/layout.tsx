@@ -1,10 +1,8 @@
 'use client'
 import { useRouter, usePathname } from 'next/navigation'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Home, Heart, Star, MessageCircle, User } from 'lucide-react'
 import Link from 'next/link'
-import { useAuth } from '@/hooks/useAuth'
-import { cn } from '@/lib/utils'
 
 const tabs = [
   { href: '/app/inicio', icon: Home, label: 'Início' },
@@ -15,22 +13,27 @@ const tabs = [
 ]
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth()
   const router = useRouter()
   const pathname = usePathname()
+  const [checked, setChecked] = useState(false)
 
   useEffect(() => {
-    if (!loading && !user) router.push('/login')
-  }, [user, loading, router])
+    const user = localStorage.getItem('capideia_user')
+    if (!user) {
+      window.location.href = '/login'
+    } else {
+      setChecked(true)
+    }
+  }, [])
 
-  if (loading || !user) {
+  if (!checked) {
     return (
       <div className="app-shell min-h-dvh flex items-center justify-center">
         <div className="text-center">
-          <div className="text-4xl mb-4 animate-bounce">🦫</div>
-          <div className="flex gap-1 justify-center">
+          <div className="text-4xl mb-4" style={{ animation: 'bounce 1s infinite' }}>🦫</div>
+          <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
             {[0,1,2].map(i => (
-              <div key={i} className="w-2 h-2 rounded-full bg-green-DEFAULT animate-bounce" style={{ animationDelay: i * 0.15 + 's' }} />
+              <div key={i} style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#00c853', animation: `bounce 1s infinite`, animationDelay: `${i * 0.15}s` }} />
             ))}
           </div>
         </div>
@@ -40,30 +43,44 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="app-shell flex flex-col min-h-dvh">
-      <main className="flex-1 overflow-hidden pb-[calc(64px+env(safe-area-inset-bottom,0px))]">
+      <main style={{ flex: 1, overflow: 'hidden', paddingBottom: 'calc(64px + env(safe-area-inset-bottom, 0px))' }}>
         {children}
       </main>
 
-      {/* Bottom Navigation */}
-      <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-mobile bg-surface/95 backdrop-blur-xl border-t border-border bottom-nav z-50">
-        <div className="flex items-center justify-around px-2 pt-2 pb-1">
+      <nav style={{
+        position: 'fixed', bottom: 0,
+        left: '50%', transform: 'translateX(-50%)',
+        width: '100%', maxWidth: '430px',
+        background: 'rgba(20,20,20,0.95)',
+        backdropFilter: 'blur(12px)',
+        borderTop: '1px solid #2a2a2a',
+        zIndex: 50,
+        paddingBottom: 'env(safe-area-inset-bottom, 0)',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-around', padding: '8px 8px 4px' }}>
           {tabs.map(({ href, icon: Icon, label, special }) => {
             const active = pathname === href
             return (
               <Link
                 key={href}
                 href={href}
-                className={cn(
-                  'flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl transition-all min-w-[56px]',
-                  special
-                    ? 'relative -top-3 bg-gradient-to-br from-green-DEFAULT to-purple-DEFAULT p-3 rounded-2xl shadow-lg'
-                    : active ? 'text-green-DEFAULT' : 'text-gray-500'
-                )}
+                style={{
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px',
+                  padding: special ? '10px 12px' : '6px 12px',
+                  borderRadius: special ? '16px' : '12px',
+                  background: special ? 'linear-gradient(135deg, #00c853, #7c4dff)' : 'transparent',
+                  color: special ? 'white' : active ? '#00c853' : '#6b7280',
+                  textDecoration: 'none',
+                  position: special ? 'relative' : 'static',
+                  top: special ? '-12px' : '0',
+                  boxShadow: special ? '0 4px 15px rgba(0,200,83,0.3)' : 'none',
+                  minWidth: '52px',
+                }}
               >
-                <Icon size={special ? 22 : 20} className={special ? 'text-white' : ''} strokeWidth={active && !special ? 2.5 : 1.5} />
-                <span className={cn('text-[10px] font-medium', special ? 'text-white text-[9px] mt-0.5' : '')}>{label}</span>
+                <Icon size={special ? 22 : 20} strokeWidth={active && !special ? 2.5 : 1.5} />
+                <span style={{ fontSize: '10px', fontWeight: 500 }}>{label}</span>
                 {active && !special && (
-                  <div className="w-1 h-1 rounded-full bg-green-DEFAULT" />
+                  <div style={{ width: '4px', height: '4px', borderRadius: '50%', background: '#00c853' }} />
                 )}
               </Link>
             )
