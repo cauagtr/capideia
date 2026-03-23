@@ -235,7 +235,7 @@ function NewExperienceForm({ onBack, onSaved }: { onBack: () => void; onSaved: (
             ) : form.video_urls.length > 0 ? (
               <p className="text-green-DEFAULT text-sm font-medium">✓ {form.video_urls.length} vídeo(s) enviado(s)</p>
             ) : (
-              <p className="text-gray-500 text-sm">Clique para selecionar vídeos</p>
+              <p className="text-gray-500 text-sm">Clique para selecionar vídeos (1-3, serão hospedados no Supabase)</p>
             )}
           </button>
           <input ref={videoRef} type="file" accept="video/*" multiple className="hidden" onChange={e => e.target.files && uploadVideos(e.target.files)} />
