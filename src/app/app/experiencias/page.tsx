@@ -44,12 +44,32 @@ export default function ExperienciasPage() {
     if (!user) return
     setLoading(true)
 
-    // Get fresh user data to get accurate monthly_redeems_used
+    // Always get fresh user data from DB (never trust localStorage for counts)
     const { data: freshUser } = await supabase.from('users').select('*').eq('id', user.id).single()
     if (freshUser) {
       setUser(freshUser)
       localStorage.setItem('capideia_user', JSON.stringify(freshUser))
       setRedeemCount(freshUser.monthly_redeems_used || 0)
+    }
+    
+    // Also count redeemed interests this month as double-check
+    const now = new Date()
+    const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
+    const { count: monthlyCount } = await supabase
+      .from('interests')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', user.id)
+      .eq('status', 'redeemed')
+      .gte('redeemed_at', firstOfMonth)
+    
+    const actualCount = monthlyCount || 0
+    if (freshUser && actualCount !== (freshUser.monthly_redeems_used || 0)) {
+      // Sync the DB if out of sync
+      await supabase.from('users').update({ monthly_redeems_used: actualCount }).eq('id', user.id)
+      setRedeemCount(actualCount)
+      const synced = { ...freshUser, monthly_redeems_used: actualCount }
+      setUser(synced)
+      localStorage.setItem('capideia_user', JSON.stringify(synced))
     }
 
     const { data } = await supabase
