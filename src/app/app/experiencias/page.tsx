@@ -1,14 +1,19 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Phone, MessageCircle, Instagram, Star, X, Clock } from 'lucide-react'
 import { createClient } from '@/lib/supabase'
-import { useAuth } from '@/hooks/useAuth'
-import { planLimits, planLabel, formatCountdown } from '@/lib/utils'
+import { planLabel, formatCountdown } from '@/lib/utils'
 import type { Interest, Experience, Review } from '@/types'
 import toast from 'react-hot-toast'
 
+function planLimitNum(plan: string): number {
+  if (plan === 'capivara') return 999
+  if (plan === 'curitibano') return 5
+  return 1
+}
+
 export default function ExperienciasPage() {
-  const { user, refreshUser } = useAuth()
+  const [user, setUser] = useState<any>(null)
   const [tab, setTab] = useState<'interesses' | 'resgatados'>('interesses')
   const [interests, setInterests] = useState<(Interest & { experience: Experience })[]>([])
   const [loading, setLoading] = useState(true)
@@ -17,21 +22,36 @@ export default function ExperienciasPage() {
   const [rating, setRating] = useState(0)
   const [comment, setComment] = useState('')
   const [reviews, setReviews] = useState<Record<string, Review>>({})
+  const [redeemCount, setRedeemCount] = useState(0)
   const supabase = createClient()
 
   useEffect(() => {
-    load()
+    const stored = localStorage.getItem('capideia_user')
+    if (stored) setUser(JSON.parse(stored))
+  }, [])
+
+  useEffect(() => {
+    if (user) load()
   }, [user])
 
-  // Ticker for countdown
+  // Refresh countdown every minute
   useEffect(() => {
-    const timer = setInterval(() => setInterests(p => [...p]), 30000)
-    return () => clearInterval(timer)
+    const t = setInterval(() => setInterests(p => [...p]), 60000)
+    return () => clearInterval(t)
   }, [])
 
   async function load() {
     if (!user) return
     setLoading(true)
+
+    // Get fresh user data to get accurate monthly_redeems_used
+    const { data: freshUser } = await supabase.from('users').select('*').eq('id', user.id).single()
+    if (freshUser) {
+      setUser(freshUser)
+      localStorage.setItem('capideia_user', JSON.stringify(freshUser))
+      setRedeemCount(freshUser.monthly_redeems_used || 0)
+    }
+
     const { data } = await supabase
       .from('interests')
       .select('*, experience:experiences(*)')
@@ -41,81 +61,85 @@ export default function ExperienciasPage() {
 
     const { data: reviewData } = await supabase.from('reviews').select('*').eq('user_id', user.id)
     const map: Record<string, Review> = {}
-    reviewData?.forEach(r => { map[r.experience_id] = r })
+    reviewData?.forEach((r: Review) => { map[r.experience_id] = r })
     setReviews(map)
     setLoading(false)
   }
 
   async function handleRedeem(item: Interest & { experience: Experience }) {
     if (!user) return
-    const limit = planLimits(user.plan)
-    if (user.monthly_redeems_used >= limit) {
-      toast.error(`Limite do plano ${planLabel(user.plan)} atingido este mês`)
+    const limit = planLimitNum(user.plan)
+    const used = redeemCount
+
+    if (used >= limit) {
+      toast.error(`Limite do plano ${planLabel(user.plan)} atingido este mês (${limit} resgate${limit > 1 ? 's' : ''})`)
       setConfirmRedeem(null)
       return
     }
+
     const now = new Date()
     const expires = new Date(now.getTime() + 48 * 60 * 60 * 1000)
-    await supabase.from('interests').update({
+
+    const { error } = await supabase.from('interests').update({
       status: 'redeemed',
       redeemed_at: now.toISOString(),
       expires_at: expires.toISOString(),
     }).eq('id', item.id)
-    await supabase.from('users').update({ monthly_redeems_used: (user.monthly_redeems_used || 0) + 1 }).eq('id', user.id)
-    await refreshUser()
+
+    if (error) { toast.error('Erro ao resgatar'); return }
+
+    const newCount = used + 1
+    await supabase.from('users').update({ monthly_redeems_used: newCount }).eq('id', user.id)
+
+    const updatedUser = { ...user, monthly_redeems_used: newCount }
+    setUser(updatedUser)
+    localStorage.setItem('capideia_user', JSON.stringify(updatedUser))
+    setRedeemCount(newCount)
     setConfirmRedeem(null)
     setTab('resgatados')
     toast.success('Recompensa resgatada! 🎉')
-    load()
+    await load()
   }
 
   async function submitReview() {
     if (!user || !reviewTarget || rating === 0) return
-    await supabase.from('reviews').upsert({
-      user_id: user.id,
-      experience_id: reviewTarget.id,
-      rating,
-      comment,
-    })
+    await supabase.from('reviews').upsert({ user_id: user.id, experience_id: reviewTarget.id, rating, comment })
     toast.success('Avaliação enviada! ⭐')
-    setReviewTarget(null)
-    setRating(0)
-    setComment('')
+    setReviewTarget(null); setRating(0); setComment('')
     load()
   }
 
   const interested = interests.filter(i => i.status === 'interested')
   const redeemed = interests.filter(i => i.status === 'redeemed')
-  const limit = user ? planLimits(user.plan) : 1
-  const remaining = limit === Infinity ? '∞' : Math.max(0, limit - (user?.monthly_redeems_used || 0))
+  const limit = planLimitNum(user?.plan || 'casual')
+  const remaining = limit === 999 ? '∞' : Math.max(0, limit - redeemCount)
 
-  // Check if any redeemed yesterday (for review prompt)
   const pendingReview = redeemed.find(i => {
-    if (!i.redeemed_at) return false
+    if (!i.redeemed_at || reviews[i.experience_id]) return false
     const d = new Date(i.redeemed_at)
     const now = new Date()
-    return d.getDate() < now.getDate() && !reviews[i.experience_id]
+    return d.getDate() < now.getDate()
   })
 
   return (
     <div className="app-shell flex flex-col min-h-dvh">
       {/* Confirm redeem modal */}
       {confirmRedeem && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center px-4 pb-8 bg-black/70">
-          <div className="w-full max-w-mobile bg-card rounded-2xl p-6 border border-border animate-slide-up">
-            <h3 className="font-bold text-lg mb-1">Resgatar recompensa?</h3>
-            <p className="text-gray-400 text-sm mb-4">
-              Você tem <strong className={remaining === '∞' ? 'text-purple-light' : 'text-green-DEFAULT'}>{remaining}</strong> experiência(s) disponível(is).
-              Após resgatar, você tem 48h para usar.
+        <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', padding: '0 16px 32px', background: 'rgba(0,0,0,0.7)' }}>
+          <div style={{ width: '100%', maxWidth: '430px', background: '#1a1a1a', borderRadius: '20px', padding: '24px', border: '1px solid #2a2a2a' }}>
+            <h3 style={{ fontWeight: 700, fontSize: '18px', marginBottom: '4px' }}>Resgatar recompensa?</h3>
+            <p style={{ color: '#9ca3af', fontSize: '14px', marginBottom: '16px' }}>
+              Você tem <strong style={{ color: remaining === '∞' ? '#a78bfa' : '#00c853' }}>{remaining}</strong> resgate(s) disponível(is) este mês.
+              Após resgatar, você tem <strong>48h</strong> para usar.
             </p>
-            <div className="bg-surface rounded-xl p-3 border border-border mb-4">
-              <p className="font-semibold text-white">{confirmRedeem.experience?.name}</p>
-              <p className="text-sm text-green-DEFAULT font-bold mt-1">Cupom: {confirmRedeem.experience?.coupon_code}</p>
-              <p className="text-xs text-gray-400 mt-0.5">{confirmRedeem.experience?.coupon_description}</p>
+            <div style={{ background: '#141414', borderRadius: '12px', padding: '12px', border: '1px solid #2a2a2a', marginBottom: '16px' }}>
+              <p style={{ fontWeight: 600, color: 'white' }}>{confirmRedeem.experience?.name}</p>
+              <p style={{ fontSize: '14px', color: '#00c853', fontWeight: 700, marginTop: '4px' }}>Cupom: {confirmRedeem.experience?.coupon_code}</p>
+              <p style={{ fontSize: '12px', color: '#9ca3af', marginTop: '2px' }}>{confirmRedeem.experience?.coupon_description}</p>
             </div>
-            <div className="flex gap-3">
-              <button onClick={() => setConfirmRedeem(null)} className="btn-secondary flex-1">Voltar</button>
-              <button onClick={() => handleRedeem(confirmRedeem)} className="btn-primary flex-1">Confirmar</button>
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <button onClick={() => setConfirmRedeem(null)} className="btn-secondary" style={{ flex: 1 }}>Voltar</button>
+              <button onClick={() => handleRedeem(confirmRedeem)} className="btn-primary" style={{ flex: 1 }}>Confirmar</button>
             </div>
           </div>
         </div>
@@ -123,94 +147,82 @@ export default function ExperienciasPage() {
 
       {/* Review modal */}
       {reviewTarget && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center px-4 pb-8 bg-black/70">
-          <div className="w-full max-w-mobile bg-card rounded-2xl p-6 border border-border animate-slide-up">
-            <div className="flex justify-between items-start mb-4">
+        <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', padding: '0 16px 32px', background: 'rgba(0,0,0,0.7)' }}>
+          <div style={{ width: '100%', maxWidth: '430px', background: '#1a1a1a', borderRadius: '20px', padding: '24px', border: '1px solid #2a2a2a' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
               <div>
-                <h3 className="font-bold text-lg">Avalie sua experiência</h3>
-                <p className="text-sm text-gray-400">{reviewTarget.name}</p>
+                <h3 style={{ fontWeight: 700, fontSize: '18px' }}>Avalie sua experiência</h3>
+                <p style={{ fontSize: '14px', color: '#9ca3af' }}>{reviewTarget.name}</p>
               </div>
-              <button onClick={() => setReviewTarget(null)}><X size={20} className="text-gray-500" /></button>
+              <button onClick={() => setReviewTarget(null)}><X size={20} style={{ color: '#6b7280' }} /></button>
             </div>
-            <div className="flex gap-2 justify-center mb-4">
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', marginBottom: '16px' }}>
               {[1,2,3,4,5].map(n => (
                 <button key={n} onClick={() => setRating(n)}>
-                  <Star size={32} fill={n <= rating ? '#f59e0b' : 'none'} className={n <= rating ? 'text-amber-400' : 'text-gray-600'} />
+                  <Star size={32} fill={n <= rating ? '#f59e0b' : 'none'} style={{ color: n <= rating ? '#f59e0b' : '#4b5563' }} />
                 </button>
               ))}
             </div>
-            <textarea
-              className="input-base resize-none h-24"
-              placeholder="Conte como foi (opcional)..."
-              value={comment}
-              onChange={e => setComment(e.target.value)}
-            />
-            <button onClick={submitReview} disabled={rating === 0} className="btn-primary w-full mt-4">
-              Enviar Avaliação
-            </button>
+            <textarea className="input-base" style={{ resize: 'none', height: '96px', marginBottom: '16px' }}
+              placeholder="Conte como foi (opcional)..." value={comment} onChange={e => setComment(e.target.value)} />
+            <button onClick={submitReview} disabled={rating === 0} className="btn-primary">Enviar Avaliação</button>
           </div>
         </div>
       )}
 
       {/* Header */}
-      <div className="px-4 pt-12 pb-2">
-        <h1 className="text-2xl font-black">Minhas Experiências</h1>
-        <p className="text-xs text-gray-500 mt-0.5">
-          Plano: <span className="text-green-DEFAULT font-medium">{planLabel(user?.plan || 'casual')}</span>
+      <div style={{ padding: '48px 16px 8px' }}>
+        <h1 style={{ fontSize: '24px', fontWeight: 900 }}>Minhas Experiências</h1>
+        <p style={{ fontSize: '12px', color: '#6b7280', marginTop: '2px' }}>
+          Plano: <span style={{ color: '#00c853', fontWeight: 600 }}>{planLabel(user?.plan || 'casual')}</span>
           {' · '}
-          <span className={remaining === '∞' ? 'text-purple-light' : 'text-white'}>{remaining}</span> resgate(s) disponível(is) este mês
+          <span style={{ color: remaining === '∞' ? '#a78bfa' : 'white' }}>{remaining}</span> resgate(s) disponível(is) este mês
         </p>
       </div>
 
       {/* Review prompt */}
       {pendingReview && (
-        <div className="mx-4 mb-2 bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 flex items-center justify-between">
+        <div style={{ margin: '0 16px 8px', background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: '12px', padding: '12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
-            <p className="text-sm font-semibold text-amber-400">Avalie sua experiência de ontem!</p>
-            <p className="text-xs text-gray-400">{pendingReview.experience?.name}</p>
+            <p style={{ fontSize: '14px', fontWeight: 600, color: '#fbbf24' }}>Avalie sua experiência de ontem!</p>
+            <p style={{ fontSize: '12px', color: '#9ca3af' }}>{pendingReview.experience?.name}</p>
           </div>
-          <button onClick={() => setReviewTarget(pendingReview.experience)} className="text-xs bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-lg px-3 py-1.5 font-medium">
+          <button onClick={() => setReviewTarget(pendingReview.experience)}
+            style={{ fontSize: '12px', background: 'rgba(245,158,11,0.2)', color: '#fbbf24', border: '1px solid rgba(245,158,11,0.3)', borderRadius: '8px', padding: '6px 12px', fontWeight: 600 }}>
             Avaliar
           </button>
         </div>
       )}
 
       {/* Tabs */}
-      <div className="flex px-4 gap-2 mb-4">
+      <div style={{ display: 'flex', padding: '0 16px', gap: '8px', marginBottom: '16px' }}>
         {(['interesses', 'resgatados'] as const).map(t => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all capitalize ${
-              tab === t ? 'bg-green-DEFAULT text-black' : 'bg-surface border border-border text-gray-400'
-            }`}
-          >
+          <button key={t} onClick={() => setTab(t)} style={{
+            flex: 1, padding: '10px', borderRadius: '12px', fontSize: '14px', fontWeight: 600, border: 'none', cursor: 'pointer',
+            background: tab === t ? '#00c853' : '#141414', color: tab === t ? 'black' : '#9ca3af',
+            outline: tab === t ? 'none' : '1px solid #2a2a2a',
+          }}>
             {t === 'interesses' ? `❤️ Interesses (${interested.length})` : `✅ Resgatados (${redeemed.length})`}
           </button>
         ))}
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto px-4 space-y-3 pb-4">
-        {loading && (
-          <div className="text-center py-12">
-            <div className="w-6 h-6 border-2 border-green-DEFAULT border-t-transparent rounded-full animate-spin mx-auto" />
-          </div>
-        )}
+      <div style={{ flex: 1, overflowY: 'auto', padding: '0 16px 16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        {loading && <div style={{ textAlign: 'center', padding: '48px 0' }}><div style={{ width: '24px', height: '24px', border: '2px solid #00c853', borderTop: '2px solid transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto' }} /></div>}
 
         {!loading && tab === 'interesses' && interested.length === 0 && (
-          <div className="text-center py-16">
-            <span className="text-4xl">💔</span>
-            <p className="text-gray-400 mt-3">Nenhuma experiência salva ainda</p>
-            <p className="text-xs text-gray-600 mt-1">Explore o feed e toque ❤️ para salvar</p>
+          <div style={{ textAlign: 'center', padding: '64px 0' }}>
+            <span style={{ fontSize: '40px' }}>💔</span>
+            <p style={{ color: '#9ca3af', marginTop: '12px' }}>Nenhuma experiência salva ainda</p>
+            <p style={{ fontSize: '12px', color: '#4b5563', marginTop: '4px' }}>Explore os Reels e toque ❤️ para salvar</p>
           </div>
         )}
 
         {!loading && tab === 'resgatados' && redeemed.length === 0 && (
-          <div className="text-center py-16">
-            <span className="text-4xl">🎫</span>
-            <p className="text-gray-400 mt-3">Nenhuma recompensa resgatada</p>
-            <p className="text-xs text-gray-600 mt-1">Salve e resgate experiências para ver aqui</p>
+          <div style={{ textAlign: 'center', padding: '64px 0' }}>
+            <span style={{ fontSize: '40px' }}>🎫</span>
+            <p style={{ color: '#9ca3af', marginTop: '12px' }}>Nenhuma recompensa resgatada</p>
           </div>
         )}
 
@@ -218,34 +230,25 @@ export default function ExperienciasPage() {
           const exp = item.experience
           const review = reviews[exp?.id]
           return (
-            <div key={item.id} className="bg-card border border-border rounded-2xl overflow-hidden">
-              {exp?.thumbnail_url && (
-                <div className="h-32 bg-cover bg-center" style={{ backgroundImage: `url(${exp.thumbnail_url})` }} />
-              )}
-              <div className="p-4">
-                <div className="flex justify-between items-start mb-1">
-                  <h3 className="font-bold text-white">{exp?.name}</h3>
-                  {exp?.discount_percent > 0 && (
-                    <span className="text-xs discount-badge rounded-lg px-2 py-0.5 text-white font-bold">{exp.discount_percent}% OFF</span>
-                  )}
+            <div key={item.id} style={{ background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: '16px', overflow: 'hidden' }}>
+              {exp?.thumbnail_url && <div style={{ height: '120px', backgroundImage: `url(${exp.thumbnail_url})`, backgroundSize: 'cover', backgroundPosition: 'center' }} />}
+              <div style={{ padding: '16px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '4px' }}>
+                  <h3 style={{ fontWeight: 700, color: 'white' }}>{exp?.name}</h3>
+                  {exp?.discount_percent > 0 && <span style={{ fontSize: '11px', background: 'linear-gradient(135deg,#ff6b35,#ff3366)', color: 'white', borderRadius: '8px', padding: '2px 8px', fontWeight: 700 }}>{exp.discount_percent}% OFF</span>}
                 </div>
-                <p className="text-xs text-gray-500 mb-0.5">{exp?.category}</p>
-                {exp?.estimated_duration && <p className="text-xs text-gray-500">⏱ {exp.estimated_duration}</p>}
-                <p className="text-sm text-green-DEFAULT font-semibold mt-1">
+                <p style={{ fontSize: '12px', color: '#6b7280', marginBottom: '2px' }}>{exp?.category}</p>
+                {exp?.estimated_duration && <p style={{ fontSize: '12px', color: '#6b7280' }}>⏱ {exp.estimated_duration}</p>}
+                <p style={{ fontSize: '14px', color: '#00c853', fontWeight: 600, marginTop: '4px' }}>
                   {exp?.price_min === 0 && exp?.price_max === 0 ? 'Gratuito' : `R$ ${exp?.price_min} – R$ ${exp?.price_max}`}
                 </p>
-
-                {review ? (
-                  <div className="flex items-center gap-1 mt-2">
-                    {[1,2,3,4,5].map(n => <Star key={n} size={12} fill={n <= review.rating ? '#f59e0b' : 'none'} className={n <= review.rating ? 'text-amber-400' : 'text-gray-600'} />)}
-                    <span className="text-xs text-gray-500 ml-1">Sua avaliação</span>
+                {review && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '8px' }}>
+                    {[1,2,3,4,5].map(n => <Star key={n} size={12} fill={n <= review.rating ? '#f59e0b' : 'none'} style={{ color: n <= review.rating ? '#f59e0b' : '#4b5563' }} />)}
+                    <span style={{ fontSize: '11px', color: '#6b7280', marginLeft: '4px' }}>Sua avaliação</span>
                   </div>
-                ) : null}
-
-                <button
-                  onClick={() => setConfirmRedeem(item)}
-                  className="btn-primary w-full mt-3 py-2.5 text-sm"
-                >
+                )}
+                <button onClick={() => setConfirmRedeem(item)} className="btn-primary" style={{ marginTop: '12px', padding: '10px 24px', fontSize: '14px' }}>
                   Resgatar Recompensa 🎁
                 </button>
               </div>
@@ -257,52 +260,43 @@ export default function ExperienciasPage() {
           const exp = item.experience
           const expired = item.expires_at && new Date(item.expires_at) < new Date()
           return (
-            <div key={item.id} className={`bg-card border rounded-2xl overflow-hidden ${expired ? 'border-border opacity-60' : 'border-green-DEFAULT/30'}`}>
+            <div key={item.id} style={{ background: '#1a1a1a', border: `1px solid ${expired ? '#2a2a2a' : 'rgba(0,200,83,0.3)'}`, borderRadius: '16px', overflow: 'hidden', opacity: expired ? 0.6 : 1 }}>
               {exp?.thumbnail_url && (
-                <div className="h-28 bg-cover bg-center relative" style={{ backgroundImage: `url(${exp.thumbnail_url})` }}>
-                  {expired && <div className="absolute inset-0 bg-black/60 flex items-center justify-center"><span className="text-white font-bold text-sm">Expirado</span></div>}
+                <div style={{ height: '112px', backgroundImage: `url(${exp.thumbnail_url})`, backgroundSize: 'cover', backgroundPosition: 'center', position: 'relative' }}>
+                  {expired && <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><span style={{ color: 'white', fontWeight: 700 }}>Expirado</span></div>}
                 </div>
               )}
-              <div className="p-4">
-                <h3 className="font-bold text-white">{exp?.name}</h3>
-
+              <div style={{ padding: '16px' }}>
+                <h3 style={{ fontWeight: 700, color: 'white', marginBottom: '8px' }}>{exp?.name}</h3>
                 {!expired && item.expires_at && (
-                  <div className="flex items-center gap-2 my-2 bg-green-DEFAULT/10 rounded-xl p-2.5 border border-green-DEFAULT/20">
-                    <Clock size={14} className="text-green-DEFAULT flex-shrink-0" />
-                    <p className="text-xs text-green-light font-medium">{formatCountdown(item.expires_at)}</p>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(0,200,83,0.1)', borderRadius: '12px', padding: '10px', border: '1px solid rgba(0,200,83,0.2)', marginBottom: '12px' }}>
+                    <Clock size={14} style={{ color: '#00c853', flexShrink: 0 }} />
+                    <p style={{ fontSize: '12px', color: '#00c853', fontWeight: 600 }}>{formatCountdown(item.expires_at)}</p>
                   </div>
                 )}
-
-                <div className="bg-surface rounded-xl p-3 mb-3">
-                  <p className="text-xs text-gray-400">Seu cupom:</p>
-                  <p className="text-green-DEFAULT font-black text-lg">{exp?.coupon_code}</p>
-                  <p className="text-xs text-gray-500 mt-1">Informe que veio pelo Capideia e aproveite!</p>
+                <div style={{ background: '#141414', borderRadius: '12px', padding: '12px', marginBottom: '12px' }}>
+                  <p style={{ fontSize: '12px', color: '#9ca3af' }}>Seu cupom:</p>
+                  <p style={{ color: '#00c853', fontWeight: 900, fontSize: '20px' }}>{exp?.coupon_code}</p>
+                  <p style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>Informe que veio pelo Capideia e aproveite!</p>
                 </div>
-
                 {!expired && (
-                  <div className="flex gap-2">
-                    {exp?.phone && (
-                      <a href={`tel:${exp.phone}`} className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-surface border border-border rounded-xl text-xs font-medium text-white">
-                        <Phone size={14} /> Ligar
-                      </a>
-                    )}
-                    {exp?.whatsapp_number && (
-                      <a href={`https://wa.me/55${exp.whatsapp_number.replace(/\D/g,'')}`} target="_blank" rel="noreferrer" className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-green-DEFAULT/10 border border-green-DEFAULT/30 rounded-xl text-xs font-medium text-green-DEFAULT">
-                        <MessageCircle size={14} /> WhatsApp
-                      </a>
-                    )}
-                    {exp?.instagram_url && (
-                      <a href={exp.instagram_url} target="_blank" rel="noreferrer" className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-purple-DEFAULT/10 border border-purple-DEFAULT/30 rounded-xl text-xs font-medium text-purple-light">
-                        <Instagram size={14} /> Instagram
-                      </a>
-                    )}
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    {exp?.phone && <a href={`tel:${exp.phone}`} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '10px', background: '#141414', border: '1px solid #2a2a2a', borderRadius: '12px', fontSize: '12px', fontWeight: 600, color: 'white', textDecoration: 'none' }}><Phone size={14} /> Ligar</a>}
+                    {exp?.whatsapp_number && <a href={`https://wa.me/55${exp.whatsapp_number.replace(/\D/g,'')}`} target="_blank" rel="noreferrer" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '10px', background: 'rgba(0,200,83,0.1)', border: '1px solid rgba(0,200,83,0.3)', borderRadius: '12px', fontSize: '12px', fontWeight: 600, color: '#00c853', textDecoration: 'none' }}><MessageCircle size={14} /> WhatsApp</a>}
+                    {exp?.instagram_url && <a href={exp.instagram_url} target="_blank" rel="noreferrer" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '10px', background: 'rgba(124,77,255,0.1)', border: '1px solid rgba(124,77,255,0.3)', borderRadius: '12px', fontSize: '12px', fontWeight: 600, color: '#a78bfa', textDecoration: 'none' }}><Instagram size={14} /> Instagram</a>}
                   </div>
+                )}
+                {!review && !expired && (
+                  <button onClick={() => setReviewTarget(exp)} style={{ width: '100%', marginTop: '8px', padding: '8px', background: 'transparent', border: '1px solid rgba(245,158,11,0.3)', borderRadius: '12px', color: '#fbbf24', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>
+                    ⭐ Avaliar experiência
+                  </button>
                 )}
               </div>
             </div>
           )
         })}
       </div>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   )
 }
